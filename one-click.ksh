@@ -19,8 +19,7 @@ ServerInstanceProfile="MAAPAnthropicServerInstanceProfile"
 
 VolumeSize=100 #Disk Storage Space
 
-GIT_REPO_URL="git@github.com:mongodb-partners/maap-anthropic.git"
-GIT_SSH_PRIVATE_KEY_PATH="/path/to/.ssh/id_rsa" #Update Git SSH Key path here. Note: This will be removed once the repo is made public as it won't be needed then.
+GIT_REPO_URL="https://github.com/mongodb-partners/maap-anthropic-qs.git"
 
 TAG_NAME="MAAP-Anthropic-One-Click"
 
@@ -146,9 +145,6 @@ deploy_infra()
 
 deploy_ec2()
 {
-  # The private SSH key
-  log_message "Reading SSH private key..."
-  GIT_SSH_PRIVATE_KEY=$(cat "$GIT_SSH_PRIVATE_KEY_PATH")
 
   typeset -A ami_map # Image name: "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-20240927" (Ubuntu Server 22.04 LTS (HVM) SSD Volume Type)
   ami_map=(
@@ -195,7 +191,6 @@ deploy_ec2()
       ParameterKey=SecurityGroupId,ParameterValue="$SECURITY_GROUP_ID" \
       ParameterKey=IAMInstanceProfile,ParameterValue="$IAM_INSTANCE_PROFILE" \
       ParameterKey=GitRepoURL,ParameterValue="$GIT_REPO_URL" \
-      ParameterKey=SSHPrivateKey,ParameterValue="$GIT_SSH_PRIVATE_KEY" \
       ParameterKey=MongoDBClusterName,ParameterValue="$MongoDBClusterName" \
       ParameterKey=MongoDBUserName,ParameterValue="$MongoDBUserName" \
       ParameterKey=MongoDBPassword,ParameterValue="$MongoDBPassword" \

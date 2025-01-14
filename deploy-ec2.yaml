@@ -43,11 +43,6 @@ Parameters:
     Description: SSH URL for the private Git repository.
     Type: String
 
-  SSHPrivateKey:
-    Description: Private SSH key to access the Git repo.
-    Type: String
-    NoEcho: true
-
   MongoDBClusterName:
     Type: String
     Description: The name of the MongoDB Cluster
@@ -149,16 +144,6 @@ Resources:
           if ! sudo usermod -aG docker ubuntu; then
             echo "Failed to add user to Docker group. Continuing..."
           fi
-
-          # Configure SSH for Git
-          echo "Setting up SSH for Git..."
-          mkdir -p /home/ubuntu/.ssh
-          echo "${SSHPrivateKey}" > /home/ubuntu/.ssh/id_rsa
-          chmod 600 /home/ubuntu/.ssh/id_rsa
-          if ! ssh-keyscan -t rsa github.com >> /home/ubuntu/.ssh/known_hosts; then
-            echo "Failed to configure SSH for Git. Continuing..."
-          fi
-          chown -R ubuntu:ubuntu /home/ubuntu/.ssh
 
           # Clone the private Git repository
           echo "Cloning Git repository..."
