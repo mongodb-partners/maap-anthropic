@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudFormation template to deploy an EC2 instance, clone a private Git repo, and set up a MAAP app on Docker.
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair for SSH access.
+    Type: String
+
+  InstanceType:
+    Description: EC2 instance type.
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t2.micro, t3.medium, t3.large, t3.xlarge]
+
+  AMIId:
+    Description: AMI ID for the instance.
+    Type: AWS::EC2::Image::Id
+    Default: ami-005fc0f236362e99f
+
+  SubnetId:
+    Description: Subnet ID to deploy the instance.
+    Type: AWS::EC2::Subnet::Id
+
+  SecurityGroupId:
+    Description: Security Group ID to associate with the instance.
+    Type: AWS::EC2::SecurityGroup::Id
+
+  VolumeSize:
+    Description: Root volume size in GiB.
+    Type: Number
+    Default: 100
+
+  TagName:
+    Description: Name tag for the EC2 instance.
+    Type: String
+    Default: MAAP-Anthropic
+
+  IAMInstanceProfile:
+    Description: IAM instance profile ARN.
+    Type: String
+
+  GitRepoURL:
+    Description: SSH URL for the private Git repository.
+    Type: String
+
+  SSHPrivateKey:
+    Description: Private SSH key to access the Git repo.
+    Type: String
+    NoEcho: true
+
+  MongoDBClusterName:
+    Type: String
+    Description: The name of the MongoDB Cluster
+    Default: "MongoDBCluster-Anthropic"
+
+  MongoDBUserName:
+    Type: String
+    Description: MongoDB User Name
+
+  MongoDBPassword:
+    Type: String
+    Description: MongoDB Password
+
+  APIPUBLICKEY:
+    Type: String
+    Description: MongoDB Atlas API_PUBLIC_KEY
+
+  APIPRIVATEKEY:
+    Type: String
+    Description: MongoDB Atlas API_PRIVATE_KEY
+
+  GROUPID:
+    Type: String
+    Description: MongoDB Atlas GROUP_ID
+
+  AWSRegion:
+    Description: AWS Region for the EC2 instance.
+    Type: String
+    Default: us-east-1
+
+  AvailabilityZone:
+    Type: String
+    Description: EC2 Availability Zone
+
+  LoggerReplicas:
+    Description: Logger Service Replicas.
+    Type: Number
+    Default: 3
+
+  LoaderReplicas:
+    Description: Loader Service Replicas.
+    Type: Number
+    Default: 3
+
+  MainReplicas:
+    Description: Main Service Replicas.
+    Type: Number
+    Default: 3
+
+  UIReplicas:
+    Description: UI Service Replicas.
+    Type: Number
+    Default: 3
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      ImageId: !Ref AMIId
+      SubnetId: !Ref SubnetId
+      AvailabilityZone: !Ref AvailabilityZone
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      BlockDeviceMappings:
+        - DeviceName: "/dev/sda1"
+          Ebs:
+            VolumeSize: !Ref VolumeSize
+            VolumeType: gp2
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Ref TagName
+      IamInstanceProfile: !Ref IAMInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+
+          LOG_FILE="/home/ubuntu/deployment.log"
+          exec > >(tee -a $LOG_FILE) 2>&1
+
+          echo "Starting instance initialization at $(date)..."
+
+          # Update and install necessary packages
+          echo "Updating system packages..."
+          if ! sudo apt update -y; then
+            echo "System update failed. Continuing..."
+          fi
+
+          echo "Installing required packages..."
+          if ! sudo apt install -y python3 python3-pip git docker.io docker-compose ksh python3-venv; then
+            echo "Package installation failed. Continuing..."
+          fi
+
+          # Add current user to the docker group
+          echo "Configuring Docker..."
+          if ! sudo usermod -aG docker ubuntu; then
+            echo "Failed to add user to Docker group. Continuing..."
+          fi
+
+          # Configure SSH for Git
+          echo "Setting up SSH for Git..."
+          mkdir -p /home/ubuntu/.ssh
+          echo "${SSHPrivateKey}" > /home/ubuntu/.ssh/id_rsa
+          chmod 600 /home/ubuntu/.ssh/id_rsa
+          if ! ssh-keyscan -t rsa github.com >> /home/ubuntu/.ssh/known_hosts; then
+            echo "Failed to configure SSH for Git. Continuing..."
+          fi
+          chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+
+          # Clone the private Git repository
+          echo "Cloning Git repository..."
+          if ! sudo -u ubuntu git clone ${GitRepoURL} /home/ubuntu/MAAP-Files; then
+            echo "Git clone failed. Continuing..."
+          fi
+
+          # Navigate to the repository
+          cd /home/ubuntu/MAAP-Files || { echo "Repository directory not found. Exiting."; exit 1; }
+
+          # Set environment variables
+          echo "Setting up environment variables..."
+          {
+            echo "AWS_REGION='${AWSRegion}'"
+            echo "API_PUBLIC_KEY='${APIPUBLICKEY}'"
+            echo "API_PRIVATE_KEY='${APIPRIVATEKEY}'"
+            echo "GROUP_ID='${GROUPID}'"
+          } > /home/ubuntu/MAAP-Files/.env
+
+          # Deploy MongoDB cluster
+          echo "Deploying MongoDB cluster..."
+          chmod +x mongodb_cluster_manager.ksh || echo "Failed to set executable permission for mongodb_cluster_manager.ksh."
+          if ! ./mongodb_cluster_manager.ksh deploy "${MongoDBClusterName}" "${MongoDBUserName}" "${MongoDBPassword}"; then
+            echo "MongoDB cluster deployment failed. Continuing..."
+          fi
+
+          # Deploy MongoDB Vector Index
+          echo "Deploying MongoDB Vector Index and inserting data..."
+          chmod +x mongodb_create_vectorindex.ksh || echo "Failed to set executable permission for mongodb_create_vectorindex.ksh."
+          if ! ./mongodb_create_vectorindex.ksh; then
+            echo "MongoDB Vector Index deployment failed. Continuing..."
+          fi
+
+          # Copy environment file
+          echo "Copying environment file..."
+          if [ -f /home/ubuntu/MAAP-Files/.env ]; then
+              sudo cp /home/ubuntu/MAAP-Files/.env /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/ui || { echo "Failed to copy .env to UI directory"; exit 1; }
+              sudo cp /home/ubuntu/MAAP-Files/.env /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/loader || { echo "Failed to copy .env to Loader directory"; exit 1; }
+              sudo cp /home/ubuntu/MAAP-Files/.env /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/logger || { echo "Failed to copy .env to Logger directory"; exit 1; }
+              sudo cp /home/ubuntu/MAAP-Files/.env /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/main/app || { echo "Failed to copy .env to Main App directory"; exit 1; }
+
+              # Change ownership and permissions to ensure accessibility
+              echo "Setting ownership and permissions for .env files..."
+              sudo chown ubuntu:ubuntu /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/ui/.env || { echo "Failed to set ownership for UI .env"; exit 1; }
+              sudo chmod 644 /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/ui/.env || { echo "Failed to set permissions for UI .env"; exit 1; }
+
+              sudo chown ubuntu:ubuntu /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/loader/.env || { echo "Failed to set ownership for Loader .env"; exit 1; }
+              sudo chmod 644 /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/loader/.env || { echo "Failed to set permissions for Loader .env"; exit 1; }
+
+              sudo chown ubuntu:ubuntu /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/logger/.env || { echo "Failed to set ownership for Logger .env"; exit 1; }
+              sudo chmod 644 /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/logger/.env || { echo "Failed to set permissions for Logger .env"; exit 1; }
+
+              sudo chown ubuntu:ubuntu /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/main/app/.env || { echo "Failed to set ownership for Main App .env"; exit 1; }
+              sudo chmod 644 /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic/main/app/.env || { echo "Failed to set permissions for Main App .env"; exit 1; }
+
+              echo "Environment files configured successfully."
+          else
+              echo ".env file not found, aborting!"
+              exit 1
+          fi
+
+          # Build Docker images and start services
+          echo "Building Docker images and starting services..."
+          cd /home/ubuntu/MAAP-Files/MAAP-AWS-Anthropic || { echo "MAAP-AWS-Anthropic directory not found. Exiting."; exit 1; }
+          chmod +x build-images.ksh || echo "Failed to set executable permission for build-images.ksh."
+          if ! ./build-images.ksh; then
+            echo "Docker image build failed. Continuing..."
+          fi
+
+          LOGGER_REPLICAS=${LoggerReplicas}
+          LOADER_REPLICAS=${LoaderReplicas}
+          MAIN_REPLICAS=${MainReplicas}
+          UI_REPLICAS=${UIReplicas}
+
+          export LOGGER_REPLICAS LOADER_REPLICAS MAIN_REPLICAS UI_REPLICAS
+
+          echo "Setting replicas:"
+          echo "Logger: $LOGGER_REPLICAS"
+          echo "Loader: $LOADER_REPLICAS"
+          echo "Main: $MAIN_REPLICAS"
+          echo "UI: $UI_REPLICAS"
+
+          if ! docker-compose up -d; then
+            echo "Docker Compose failed to start services. Continuing..."
+          fi
+
+          echo "Instance initialization completed at $(date)."
+
+Outputs:
+  InstanceId:
+    Description: Instance ID of the deployed EC2 instance.
+    Value: !Ref EC2Instance
+
+  PublicDNS:
+    Description: Public DNS of the deployed EC2 instance.
+    Value: !GetAtt EC2Instance.PublicDnsName
+
+  EC2PublicIP:
+    Description: Public IPv4 address of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp

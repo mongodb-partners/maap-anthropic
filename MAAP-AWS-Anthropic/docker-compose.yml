@@ -1,0 +1,44 @@
+services:
+  logger:
+    image: logger
+    environment:
+      - PORT=8181
+    deploy:
+      replicas: ${LOGGER_REPLICAS:-3}
+  loader:
+    image: loader
+    environment:
+      - PORT=8001
+    depends_on:
+      - logger
+    deploy:
+      replicas: ${LOADER_REPLICAS:-3}
+  main:
+    image: main
+    depends_on:
+      - logger
+    environment:
+      - PORT=8000
+    deploy:
+      replicas: ${MAIN_REPLICAS:-3}
+  ui:
+    image: ui
+    depends_on:
+      - loader
+      - main
+      - logger
+    environment:
+      - PORT=7860
+    deploy:
+      replicas: ${UI_REPLICAS:-3}
+
+  nginx:
+    image: nginx
+    container_name: nginx
+    ports:
+      - 7860:7860
+    depends_on:
+      - ui
+      - main
+      - loader
+      - logger

@@ -1,0 +1,8 @@
+gradio==5.1.0
+langchain==0.3.3
+langserve==0.3.0
+python-dotenv==1.0.1
+langchain_mongodb==0.2.0
+python-multipart==0.0.12
+httpx==0.27.2
+fastapi==0.115.6

@@ -1,0 +1,26 @@
+{
+  "fields": [
+    {
+      "numDimensions": 1536,
+      "path": "document_embedding",
+      "similarity": "cosine",
+      "type": "vector"
+    },
+    {
+      "type": "filter",
+      "path": "userId"
+    }
+  ]
+}
+
+######Search Index
+{
+  "mappings": {
+    "dynamic": false,
+    "fields": {
+      "document_text": {
+        "type": "string"
+      }
+    }
+  }
+}
